@@ -1,4 +1,5 @@
 import asyncio
+import yaml
 from typing import Dict, Any
 from bt_agent.core import BTAgent, BTAgentAction
 from btengine.base import NodeStatus
@@ -70,38 +71,42 @@ class FarewellAction(BTAgentAction):
 class SimpleConversationAgent(BTAgent):
     """A simple conversational agent that can greet, chat, and say goodbye."""
     
-    def __init__(self):
+    def __init__(self, config_path: str = "examples/simple_agent.yaml"):
+        # Load configuration from YAML
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
         super().__init__(
-            name="ConversationAgent",
-            instructions="""You are a friendly conversational agent that can:
-            1. Greet users
-            2. Engage in small talk
-            3. Answer questions
-            4. Say goodbye when appropriate
-            
-            Use the available tools to structure the conversation naturally."""
+            name=config['name'],
+            instructions=config['description']
         )
+        self.config = config
 
     def setup_tree(self):
-        # Create nodes for different conversation phases
-        greet_node = GreetAction("greet", self)
+        # Create a mapping of action class names to their actual classes
+        action_classes = {
+            'GreetAction': GreetAction,
+            'UnderstandIntentAction': UnderstandIntentAction,
+            'SmallTalkAction': SmallTalkAction,
+            'AnswerQuestionAction': AnswerQuestionAction,
+            'FarewellAction': FarewellAction
+        }
         
-        conversation_sequence = SequenceNode("conversation", [
-            UnderstandIntentAction("understand_intent", self),
-            SelectorNode("response", [
-                SmallTalkAction("small_talk", self),
-                AnswerQuestionAction("answer_question", self)
-            ])
-        ])
+        def build_node(node_config):
+            if node_config['type'] == 'action':
+                action_class = action_classes[node_config['class']]
+                return action_class(node_config['name'], self)
+            elif node_config['type'] == 'sequence':
+                children = [build_node(child) for child in node_config['children']]
+                return SequenceNode(node_config['name'], children)
+            elif node_config['type'] == 'selector':
+                children = [build_node(child) for child in node_config['children']]
+                return SelectorNode(node_config['name'], children)
+            else:
+                raise ValueError(f"Unknown node type: {node_config['type']}")
         
-        farewell_node = FarewellAction("farewell", self)
-        
-        # Create the main sequence
-        return SequenceNode("main", [
-            greet_node,
-            conversation_sequence,
-            farewell_node
-        ])
+        # Build the tree from the YAML configuration
+        return build_node(self.config['behavior_tree']['root'])
 
 async def main():
     # Create and run the agent

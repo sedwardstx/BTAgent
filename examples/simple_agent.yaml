@@ -1,0 +1,39 @@
+name: ConversationAgent
+description: |
+  A friendly conversational agent that can:
+  1. Greet users
+  2. Engage in small talk
+  3. Answer questions
+  4. Say goodbye when appropriate
+
+behavior_tree:
+  root:
+    type: sequence
+    name: main
+    children:
+      - type: action
+        name: greet
+        class: GreetAction
+      
+      - type: sequence
+        name: conversation
+        children:
+          - type: action
+            name: understand_intent
+            class: UnderstandIntentAction
+          - type: selector
+            name: response
+            children:
+              - type: action
+                name: small_talk
+                class: SmallTalkAction
+              - type: action
+                name: answer_question
+                class: AnswerQuestionAction
+      
+      - type: action
+        name: farewell
+        class: FarewellAction
+
+# Action class definitions remain in the Python file
+# This YAML defines only the tree structure 
