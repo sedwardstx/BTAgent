@@ -3,7 +3,6 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from agents import Agent, Runner
-from agents.items import AgentFinish, AgentStep, AgentMessage
 from agents.tools.base import BaseTool
 from agents.lifecycle import AgentHooks
 from agents.function_tool import function_tool
@@ -19,7 +18,7 @@ TContext = TypeVar('TContext')
 @dataclass
 class BTExecutionContext:
     """Context shared across all behavior tree nodes during execution."""
-    agent_step: Optional[AgentStep] = None
+    current_input: Optional[str] = None
     tool_results: Dict[str, Any] = field(default_factory=dict)
     shared_memory: Dict[str, Any] = field(default_factory=dict)
     execution_count: int = 0
