@@ -3,12 +3,17 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from agents import Agent, Runner
-from agents.tools.base import BaseTool
-from agents.lifecycle import AgentHooks
-from agents.function_tool import function_tool
+from agents import Tool as BaseTool
+from agents import AgentHooks
+from agents import function_tool
 from agents.handoffs import Handoff
-from btengine.base import BTNode, NodeStatus
-from btengine.nodes import ActionNodeBase, SequenceNode, SelectorNode, ParallelNode, DecoratorNodeBase
+# Now using the full improved BTEngine with all new features!
+from behavior_tree_engine.core import (
+    NodeStatus, Node as BTNode, Action as ActionNodeBase, 
+    Sequence as SequenceNode, Selector as SelectorNode, Parallel as ParallelNode,
+    Decorator as DecoratorNodeBase, Inverter, Timeout, Repeater, RetryUntilSuccess,
+    AsyncAction, BehaviorTree  # ✅ Now available!
+)
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -24,6 +29,52 @@ class BTExecutionContext:
     execution_count: int = 0
     max_executions: int = 100
 
+class BTAgentAsyncAction(AsyncAction):
+    """✅ Now using the real AsyncAction base class from BTEngine!"""
+    
+    def __init__(self, name: str, agent: 'BTAgent', context_key: Optional[str] = None):
+        super().__init__(name)
+        self.agent = agent
+        self.context_key = context_key or name
+        
+    @property
+    def execution_context(self) -> BTExecutionContext:
+        """Get the current execution context."""
+        return self.agent.execution_context
+    
+    def get_shared_data(self, key: str, default: Any = None) -> Any:
+        """Get data from shared memory."""
+        return self.execution_context.shared_memory.get(key, default)
+    
+    def set_shared_data(self, key: str, value: Any) -> None:
+        """Set data in shared memory."""
+        self.execution_context.shared_memory[key] = value
+    
+    def get_tool_result(self, tool_name: str) -> Any:
+        """Get the result of a specific tool call."""
+        return self.execution_context.tool_results.get(tool_name)
+    
+    async def _async_tick(self) -> NodeStatus:
+        """✅ Now using the proper BTEngine async method!"""
+        try:
+            # Check execution limits
+            if self.execution_context.execution_count >= self.execution_context.max_executions:
+                logger.warning(f"Max executions reached for {self.name}")
+                return NodeStatus.FAILURE
+            
+            self.execution_context.execution_count += 1
+            
+            # Call the async execute method
+            return await self.execute_async()
+                
+        except Exception as e:
+            logger.error(f"Async node {self.name} execution failed: {e}")
+            return NodeStatus.FAILURE
+    
+    async def execute_async(self) -> NodeStatus:
+        """Override this method for async execution logic."""
+        return NodeStatus.SUCCESS
+
 class BTAgentAction(ActionNodeBase):
     """Base class for agent action nodes that integrate with the Agents SDK."""
     
@@ -31,7 +82,7 @@ class BTAgentAction(ActionNodeBase):
         super().__init__(name)
         self.agent = agent
         self.context_key = context_key or name
-        self._last_status = NodeStatus.READY
+        self._last_status = NodeStatus.READY  # ✅ Now using the real READY status!
         
     @property
     def execution_context(self) -> BTExecutionContext:
@@ -58,7 +109,7 @@ class BTAgentAction(ActionNodeBase):
         """Override this method for execution logic."""
         return NodeStatus.SUCCESS
     
-    def tick(self) -> NodeStatus:
+    def _tick(self) -> NodeStatus:
         """Execute the node synchronously."""
         try:
             # Check execution limits
@@ -68,22 +119,8 @@ class BTAgentAction(ActionNodeBase):
             
             self.execution_context.execution_count += 1
             
-            # Try async execution first
-            if hasattr(self, 'execute_async'):
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're already in an async context, create a task
-                        task = asyncio.create_task(self.execute_async())
-                        # This is a simplification - in practice you'd want proper async handling
-                        return NodeStatus.RUNNING
-                    else:
-                        return loop.run_until_complete(self.execute_async())
-                except Exception as e:
-                    logger.error(f"Async execution failed for {self.name}: {e}")
-                    return NodeStatus.FAILURE
-            else:
-                return self.execute()
+            # For synchronous operations, just call execute
+            return asyncio.run(self.execute())
                 
         except Exception as e:
             logger.error(f"Node {self.name} execution failed: {e}")
@@ -233,26 +270,34 @@ class BTAgent(Agent, Generic[TContext]):
         )
         
         self.context = context
-        self.behavior_tree: Optional[BTNode] = None
+        self.behavior_tree: Optional[BehaviorTree] = None  # ✅ Now using the real BehaviorTree wrapper!
         self.execution_context = BTExecutionContext()
         self.tree_config = tree_config or {}
         self._node_registry: Dict[str, type] = {
             'action': BTAgentAction,
+            'async_action': BTAgentAsyncAction,
             'tool': BTToolAction,
             'handoff': BTHandoffAction,
             'condition': BTConditionNode,
             'sequence': SequenceNode,
             'selector': SelectorNode,
             'parallel': ParallelNode,
+            'inverter': Inverter,
+            'timeout': Timeout,
+            'repeater': Repeater,
+            'retry': RetryUntilSuccess,
         }
         
         self._initialize()
 
     def _initialize(self) -> None:
         """Initialize the behavior tree."""
-        self.behavior_tree = self.setup_tree()
-        if not self.behavior_tree:
+        root_node = self.setup_tree()
+        if not root_node:
             raise ValueError("Behavior tree not set up. Override setup_tree() method or provide tree_config.")
+        
+        # ✅ Now using the real BehaviorTree wrapper!
+        self.behavior_tree = BehaviorTree(root_node, name=f"{self.name}_tree")
 
     def setup_tree(self) -> BTNode:
         """Override this method to define the behavior tree structure programmatically."""
@@ -278,6 +323,28 @@ class BTAgent(Agent, Generic[TContext]):
             node_class = self._node_registry[node_type]
             return node_class(node_name, children)
         
+        elif node_type in ['inverter', 'timeout', 'repeater', 'retry']:
+            # Decorator nodes - ✅ Now using improved constructors!
+            child_config = node_config.get('child')
+            if not child_config:
+                raise ValueError(f"Decorator node {node_name} requires a child")
+            
+            child = self._build_node_recursive(child_config)
+            node_class = self._node_registry[node_type]
+            
+            # ✅ Using the improved flexible constructors
+            if node_type == 'timeout':
+                timeout_sec = node_config.get('timeout_sec', 5.0)
+                return node_class(child, name=node_name, timeout_sec=timeout_sec)
+            elif node_type == 'retry':
+                max_attempts = node_config.get('max_attempts', 3)
+                return node_class(child, name=node_name, max_attempts=max_attempts)
+            elif node_type == 'repeater':
+                num_repeats = node_config.get('num_repeats', 1)
+                return node_class(child, name=node_name, num_repeats=num_repeats)
+            else:
+                return node_class(child, name=node_name)
+        
         elif node_type == 'tool':
             # Tool action node
             tool_name = node_config.get('tool_name', node_name)
@@ -297,6 +364,13 @@ class BTAgent(Agent, Generic[TContext]):
                 raise ValueError(f"Condition node {node_name} requires condition_func")
             return BTConditionNode(node_name, self, condition_func)
         
+        elif node_type == 'async_action':
+            # Async action node
+            node_class = node_config.get('class', BTAgentAsyncAction)
+            if isinstance(node_class, str):
+                node_class = self._node_registry.get(node_class, BTAgentAsyncAction)
+            return node_class(node_name, self)
+        
         else:
             # Default action node
             node_class = node_config.get('class', BTAgentAction)
@@ -313,10 +387,11 @@ class BTAgent(Agent, Generic[TContext]):
         with open(yaml_path, 'r') as f:
             config = yaml.safe_load(f)
         self.tree_config = config
-        self.behavior_tree = self.build_tree_from_config(config)
+        root_node = self.build_tree_from_config(config)
+        self.behavior_tree = BehaviorTree(root_node, name=f"{self.name}_tree")
     
     async def execute_tree(self, input_data: Optional[Dict[str, Any]] = None) -> NodeStatus:
-        """Execute the behavior tree with optional input data."""
+        """✅ Execute the behavior tree using the improved BehaviorTree wrapper!"""
         if not self.behavior_tree:
             return NodeStatus.FAILURE
         
@@ -325,20 +400,47 @@ class BTAgent(Agent, Generic[TContext]):
         if input_data:
             self.execution_context.shared_memory.update(input_data)
         
-        # Execute the tree
+        # ✅ Use the new BehaviorTree async execution!
         try:
-            status = self.behavior_tree.tick()
+            self.behavior_tree.reset()
+            status = await self.behavior_tree.run_until_complete_async()
             logger.info(f"Behavior tree execution completed with status: {status}")
             return status
         except Exception as e:
             logger.error(f"Behavior tree execution failed: {e}")
             return NodeStatus.FAILURE
     
+    def execute_tree_sync(self, input_data: Optional[Dict[str, Any]] = None) -> NodeStatus:
+        """✅ Execute the behavior tree synchronously using the improved wrapper!"""
+        if not self.behavior_tree:
+            return NodeStatus.FAILURE
+        
+        # Reset execution context
+        self.execution_context = BTExecutionContext()
+        if input_data:
+            self.execution_context.shared_memory.update(input_data)
+        
+        # ✅ Use the new BehaviorTree sync execution!
+        try:
+            self.behavior_tree.reset()
+            status = self.behavior_tree.run_until_complete()
+            logger.info(f"Behavior tree execution completed with status: {status}")
+            return status
+        except Exception as e:
+            logger.error(f"Behavior tree execution failed: {e}")
+            return NodeStatus.FAILURE
+
     def tick(self) -> NodeStatus:
         """Execute one tick of the behavior tree."""
         if not self.behavior_tree:
             return NodeStatus.FAILURE
         return self.behavior_tree.tick()
+    
+    async def tick_async(self) -> NodeStatus:
+        """✅ Execute one async tick using the improved BehaviorTree wrapper!"""
+        if not self.behavior_tree:
+            return NodeStatus.FAILURE
+        return await self.behavior_tree.tick_async()
 
     def reset(self) -> None:
         """Reset the agent's state."""
@@ -353,7 +455,8 @@ class BTAgent(Agent, Generic[TContext]):
             return {"status": "no_tree"}
         
         return {
-            "tree_status": self.behavior_tree.status.name,
+            "tree_status": self.behavior_tree.last_status.name,
+            "tick_count": self.behavior_tree.tick_count,
             "execution_count": self.execution_context.execution_count,
             "shared_memory_keys": list(self.execution_context.shared_memory.keys()),
             "tool_results_keys": list(self.execution_context.tool_results.keys())
@@ -361,59 +464,17 @@ class BTAgent(Agent, Generic[TContext]):
 
 # Utility functions for creating common behavior tree patterns
 def create_retry_decorator(child: BTNode, max_attempts: int = 3) -> BTNode:
-    """Create a retry decorator that retries a child node up to max_attempts times."""
-    class RetryDecorator(DecoratorNodeBase):
-        def __init__(self, name: str, child: BTNode, max_attempts: int):
-            super().__init__(name, child)
-            self.max_attempts = max_attempts
-            self.attempt_count = 0
-        
-        def tick(self) -> NodeStatus:
-            if self.attempt_count >= self.max_attempts:
-                return NodeStatus.FAILURE
-            
-            status = self.child.tick()
-            if status == NodeStatus.FAILURE:
-                self.attempt_count += 1
-                if self.attempt_count < self.max_attempts:
-                    self.child.reset()
-                    return NodeStatus.RUNNING
-            elif status == NodeStatus.SUCCESS:
-                self.attempt_count = 0
-            
-            return status
-        
-        def reset(self) -> None:
-            super().reset()
-            self.attempt_count = 0
-    
-    return RetryDecorator(f"retry_{child.name}", child, max_attempts)
+    """✅ Create a retry decorator using the improved constructor."""
+    return RetryUntilSuccess(child, name=f"retry_{getattr(child, 'name', 'unknown')}", max_attempts=max_attempts)
 
 def create_timeout_decorator(child: BTNode, timeout_seconds: float) -> BTNode:
-    """Create a timeout decorator that fails the child if it takes too long."""
-    import time
-    
-    class TimeoutDecorator(DecoratorNodeBase):
-        def __init__(self, name: str, child: BTNode, timeout: float):
-            super().__init__(name, child)
-            self.timeout = timeout
-            self.start_time = None
-        
-        def tick(self) -> NodeStatus:
-            if self.start_time is None:
-                self.start_time = time.time()
-            
-            if time.time() - self.start_time > self.timeout:
-                return NodeStatus.FAILURE
-            
-            status = self.child.tick()
-            if status != NodeStatus.RUNNING:
-                self.start_time = None
-            
-            return status
-        
-        def reset(self) -> None:
-            super().reset()
-            self.start_time = None
-    
-    return TimeoutDecorator(f"timeout_{child.name}", child, timeout_seconds) 
+    """✅ Create a timeout decorator using the improved constructor."""
+    return Timeout(child, name=f"timeout_{getattr(child, 'name', 'unknown')}", timeout_sec=timeout_seconds)
+
+def create_repeater_decorator(child: BTNode, repeat_count: int = 1) -> BTNode:
+    """✅ Create a repeater decorator using the improved constructor."""
+    return Repeater(child, name=f"repeat_{getattr(child, 'name', 'unknown')}", num_repeats=repeat_count)
+
+def create_inverter_decorator(child: BTNode) -> BTNode:
+    """✅ Create an inverter decorator using the improved constructor."""
+    return Inverter(child, name=f"invert_{getattr(child, 'name', 'unknown')}") 
