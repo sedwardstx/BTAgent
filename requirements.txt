@@ -1,5 +1,5 @@
-openai-agents>=0.1.0
+openai-agents>=0.0.19
 pydantic>=2.0.0
 python-dotenv>=1.0.0
-git+https://github.com/sedwardstx/BTEngine.git@main#egg=btengine&subdirectory=BehaviorTreeEngine
+git+https://github.com/sedwardstx/BTEngine.git@main#egg=behavior-tree-engine&subdirectory=BehaviorTreeEngine
 -e . 
