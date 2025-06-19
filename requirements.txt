@@ -1,5 +1,5 @@
 openai-agents>=0.1.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
--e git+https://github.com/sedwardstx/BTEngine.git#egg=BTEngine
+-e ./BTEngine
 -e . 
