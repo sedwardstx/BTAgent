@@ -183,23 +183,25 @@ class BTAgentHooks(AgentHooks):
     def __init__(self, agent: 'BTAgent'):
         self.agent = agent
         
-    async def on_agent_start(self, agent_name: str) -> None:
+    def on_agent_start(self, agent_name: str) -> None:
         """Called when agent starts execution."""
         logger.info(f"Agent {agent_name} starting execution")
         if self.agent.behavior_tree:
             self.agent.execution_context.execution_count = 0
             
-    async def on_tool_start(self, tool_name: str, tool_input: Dict[str, Any]) -> None:
+    def on_tool_start(self, *args, **kwargs) -> None:
         """Called when a tool starts executing."""
-        logger.debug(f"Tool {tool_name} starting with input: {tool_input}")
+        logger.debug(f"Tool starting with {len(args)} args and {len(kwargs)} kwargs")
+        if len(args) >= 2 and hasattr(args[1], 'name'):
+            logger.debug(f"Tool {args[1].name} starting")
         
-    async def on_tool_end(self, tool_name: str, tool_output: Any) -> None:
+    def on_tool_end(self, tool_name: str, tool_output: Any) -> None:
         """Called when a tool finishes executing."""
         logger.debug(f"Tool {tool_name} completed with output: {tool_output}")
         # Store tool result in execution context
         self.agent.execution_context.tool_results[tool_name] = tool_output
         
-    async def on_error(self, error: Exception) -> None:
+    def on_error(self, error: Exception) -> None:
         """Called when an error occurs during agent execution."""
         logger.error(f"Agent execution error: {error}")
         # Mark current tree execution as failed
@@ -226,8 +228,8 @@ class BTAgent(Agent, Generic[TContext]):
             tools=tools or [],
             handoffs=handoffs or [],
             mcp_servers=mcp_servers or [],
-            model=model,
-            hooks=BTAgentHooks(self)
+            model=model
+            # hooks=BTAgentHooks(self)  # Commented out for now
         )
         
         self.context = context
