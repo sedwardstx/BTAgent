@@ -1,24 +1,57 @@
 from typing import Optional, Dict, Any, List
 from agents import Agent, Runner
 from agents.exceptions import AgentError
-from agents.items import AgentFinish, AgentStep
-from agents.tools import BaseTool
+from agents.items import AgentFinish, AgentStep, AgentMessage
+from agents.tools.base import BaseTool
+from agents.lifecycle import AgentHooks
 from btengine.base import BTNode, NodeStatus
-from btengine.nodes import ActionNodeBase
+from btengine.nodes import ActionNodeBase, SequenceNode
 
 class BTAgentAction(ActionNodeBase):
-    """Base class for agent action nodes."""
+    """Base class for agent action nodes that integrate with the Agents SDK."""
     def __init__(self, name: str, agent: 'BTAgent'):
         super().__init__(name)
         self.agent = agent
         self.current_step: Optional[AgentStep] = None
+        self.tool_result: Optional[Any] = None
 
     def update_step(self, step: AgentStep) -> None:
         """Update the current agent step."""
         self.current_step = step
+        
+    def update_tool_result(self, result: Any) -> None:
+        """Update the result from a tool call."""
+        self.tool_result = result
 
-class BTAgent:
-    """Base class for behavior tree-based AI agents."""
+class BTAgentHooks(AgentHooks):
+    """Hooks that bridge between Agent SDK events and behavior tree execution."""
+    
+    def __init__(self, agent: 'BTAgent'):
+        self.agent = agent
+        
+    async def on_tool_start(self, tool_name: str, tool_input: Dict[str, Any]) -> None:
+        """Called when a tool starts executing."""
+        # Tool start could trigger node status update
+        if self.agent.behavior_tree:
+            self.agent.behavior_tree.tick()
+            
+    async def on_tool_end(self, tool_name: str, tool_output: Any) -> None:
+        """Called when a tool finishes executing."""
+        # Update the current action node with the tool result
+        if isinstance(self.agent.behavior_tree, BTAgentAction):
+            self.agent.behavior_tree.update_tool_result(tool_output)
+        self.agent.behavior_tree.tick()
+            
+    async def on_tool_error(self, tool_name: str, error: Exception) -> None:
+        """Called when a tool execution fails."""
+        # Tool error maps to node failure
+        if self.agent.behavior_tree:
+            if isinstance(error, AgentError):
+                self.agent.behavior_tree.status = NodeStatus.FAILURE
+            self.agent.behavior_tree.tick()
+
+class BTAgent(Agent):
+    """A behavior tree-based AI agent that integrates with the OpenAI Agents SDK."""
     
     def __init__(
         self,
@@ -27,15 +60,14 @@ class BTAgent:
         tools: Optional[List[BaseTool]] = None,
         model: str = "gpt-4-turbo-preview"
     ):
-        self.name = name
-        self.agent = Agent(
+        super().__init__(
             name=name,
             instructions=instructions,
             tools=tools or [],
-            model=model
+            model=model,
+            hooks=BTAgentHooks(self)
         )
         self.behavior_tree: Optional[BTNode] = None
-        self.current_step: Optional[AgentStep] = None
         self._initialize()
 
     def _initialize(self) -> None:
@@ -48,46 +80,6 @@ class BTAgent:
         """Override this method to define the behavior tree structure."""
         raise NotImplementedError("Subclasses must implement setup_tree()")
 
-    async def run(self, input_text: str) -> Dict[str, Any]:
-        """Run the agent with the given input."""
-        self.reset()
-        
-        async def step_callback(step: AgentStep) -> None:
-            """Callback for each agent step."""
-            self.current_step = step
-            # Update all action nodes with the current step
-            self._update_action_nodes(self.behavior_tree, step)
-
-        try:
-            result = await Runner.run(
-                self.agent,
-                input_text,
-                callbacks={"on_step": step_callback}
-            )
-            return {
-                "status": "success",
-                "output": result.final_output,
-                "steps": result.steps
-            }
-        except AgentError as e:
-            return {
-                "status": "error",
-                "error": str(e),
-                "steps": e.steps if hasattr(e, 'steps') else []
-            }
-
-    def _update_action_nodes(self, node: BTNode, step: AgentStep) -> None:
-        """Recursively update all action nodes with the current step."""
-        if isinstance(node, BTAgentAction):
-            node.update_step(step)
-        
-        # Update children if any
-        if hasattr(node, 'children'):
-            for child in node.children:
-                self._update_action_nodes(child, step)
-        elif hasattr(node, 'child'):
-            self._update_action_nodes(node.child, step)
-
     def tick(self) -> NodeStatus:
         """Execute one tick of the behavior tree."""
         if not self.behavior_tree:
@@ -98,7 +90,7 @@ class BTAgent:
         """Reset the agent's state."""
         if self.behavior_tree:
             self.behavior_tree.reset()
-        self.current_step = None
+        super().reset()
 
     def map_tool_to_node_status(self, tool_result: Any) -> NodeStatus:
         """Map a tool result to a node status."""

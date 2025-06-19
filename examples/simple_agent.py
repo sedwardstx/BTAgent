@@ -1,9 +1,10 @@
 import asyncio
-import yaml
 from typing import Dict, Any
 from bt_agent.core import BTAgent, BTAgentAction
 from btengine.base import NodeStatus
 from btengine.nodes import SequenceNode, SelectorNode
+from agents.tools.base import BaseTool
+from agents.function_tool import function_tool
 
 class GreetAction(BTAgentAction):
     def tick(self) -> NodeStatus:
@@ -31,6 +32,11 @@ class UnderstandIntentAction(BTAgentAction):
         
         return NodeStatus.SUCCESS
 
+@function_tool
+async def handle_small_talk(message: str) -> str:
+    """Handle casual conversation and small talk."""
+    return "I'm doing well! How about you?"
+
 class SmallTalkAction(BTAgentAction):
     def tick(self) -> NodeStatus:
         """Handle casual conversation."""
@@ -41,72 +47,36 @@ class SmallTalkAction(BTAgentAction):
         small_talk_triggers = ["how are you", "what's up", "nice", "weather", "good"]
         
         if any(trigger in message for trigger in small_talk_triggers):
-            return NodeStatus.SUCCESS
+            # Use the small talk tool
+            return NodeStatus.SUCCESS if self.tool_result else NodeStatus.RUNNING
         return NodeStatus.FAILURE
-
-class AnswerQuestionAction(BTAgentAction):
-    def tick(self) -> NodeStatus:
-        """Handle questions from the user."""
-        if not self.current_step:
-            return NodeStatus.FAILURE
-        
-        message = self.current_step.input_text.lower()
-        question_indicators = ["what", "why", "how", "when", "where", "who", "?"]
-        
-        if any(indicator in message for indicator in question_indicators):
-            return NodeStatus.SUCCESS
-        return NodeStatus.FAILURE
-
-class FarewellAction(BTAgentAction):
-    def tick(self) -> NodeStatus:
-        """Handle saying goodbye."""
-        if not self.current_step:
-            return NodeStatus.FAILURE
-        
-        message = self.current_step.input_text.lower()
-        if any(word in message for word in ["bye", "goodbye", "see you", "farewell"]):
-            return NodeStatus.SUCCESS
-        return NodeStatus.RUNNING
 
 class SimpleConversationAgent(BTAgent):
     """A simple conversational agent that can greet, chat, and say goodbye."""
     
-    def __init__(self, config_path: str = "examples/simple_agent.yaml"):
-        # Load configuration from YAML
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        
+    def __init__(self):
         super().__init__(
-            name=config['name'],
-            instructions=config['description']
+            name="SimpleConversationAgent",
+            instructions="""You are a friendly conversational agent that can:
+            1. Greet users
+            2. Engage in small talk
+            3. Answer questions
+            4. Say goodbye when appropriate
+            
+            Always be polite and helpful in your responses.""",
+            tools=[handle_small_talk]
         )
-        self.config = config
 
-    def setup_tree(self):
-        # Create a mapping of action class names to their actual classes
-        action_classes = {
-            'GreetAction': GreetAction,
-            'UnderstandIntentAction': UnderstandIntentAction,
-            'SmallTalkAction': SmallTalkAction,
-            'AnswerQuestionAction': AnswerQuestionAction,
-            'FarewellAction': FarewellAction
-        }
-        
-        def build_node(node_config):
-            if node_config['type'] == 'action':
-                action_class = action_classes[node_config['class']]
-                return action_class(node_config['name'], self)
-            elif node_config['type'] == 'sequence':
-                children = [build_node(child) for child in node_config['children']]
-                return SequenceNode(node_config['name'], children)
-            elif node_config['type'] == 'selector':
-                children = [build_node(child) for child in node_config['children']]
-                return SelectorNode(node_config['name'], children)
-            else:
-                raise ValueError(f"Unknown node type: {node_config['type']}")
-        
-        # Build the tree from the YAML configuration
-        return build_node(self.config['behavior_tree']['root'])
+    def setup_tree(self) -> BTNode:
+        """Set up the behavior tree structure."""
+        return SequenceNode("main", [
+            GreetAction("greet", self),
+            UnderstandIntentAction("understand_intent", self),
+            SelectorNode("response", [
+                SmallTalkAction("small_talk", self),
+                # Other response actions...
+            ])
+        ])
 
 async def main():
     # Create and run the agent
@@ -123,8 +93,8 @@ async def main():
     
     for message in messages:
         print(f"\nUser: {message}")
-        result = await agent.run(message)
-        print(f"Agent: {result['output']}")
+        result = await Runner.run(agent, message)
+        print(f"Agent: {result.final_output}")
 
 if __name__ == "__main__":
     asyncio.run(main()) 
