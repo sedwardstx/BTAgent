@@ -7,8 +7,8 @@ from agents.tools.base import BaseTool
 from agents.function_tool import function_tool
 
 class GreetAction(BTAgentAction):
+    """Node that handles greeting the user."""
     def tick(self) -> NodeStatus:
-        """Handle greeting the user."""
         if not self.current_step:
             return NodeStatus.FAILURE
         
@@ -18,8 +18,8 @@ class GreetAction(BTAgentAction):
         return NodeStatus.FAILURE
 
 class UnderstandIntentAction(BTAgentAction):
+    """Node that understands the user's intent."""
     def tick(self) -> NodeStatus:
-        """Understand the user's intent from their message."""
         if not self.current_step:
             return NodeStatus.FAILURE
         
@@ -38,8 +38,8 @@ async def handle_small_talk(message: str) -> str:
     return "I'm doing well! How about you?"
 
 class SmallTalkAction(BTAgentAction):
+    """Node that handles casual conversation."""
     def tick(self) -> NodeStatus:
-        """Handle casual conversation."""
         if not self.current_step:
             return NodeStatus.FAILURE
         
@@ -52,7 +52,7 @@ class SmallTalkAction(BTAgentAction):
         return NodeStatus.FAILURE
 
 class SimpleConversationAgent(BTAgent):
-    """A simple conversational agent that can greet, chat, and say goodbye."""
+    """A simple conversational agent that uses a behavior tree to manage conversation flow."""
     
     def __init__(self):
         super().__init__(
@@ -74,7 +74,7 @@ class SimpleConversationAgent(BTAgent):
             UnderstandIntentAction("understand_intent", self),
             SelectorNode("response", [
                 SmallTalkAction("small_talk", self),
-                # Other response actions...
+                # Other response actions can be added here
             ])
         ])
 
@@ -95,6 +95,8 @@ async def main():
         print(f"\nUser: {message}")
         result = await Runner.run(agent, message)
         print(f"Agent: {result.final_output}")
+        # Print the current behavior tree status
+        print(f"Tree status: {agent.behavior_tree.status.name}")
 
 if __name__ == "__main__":
     asyncio.run(main()) 
